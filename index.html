@@ -5,14 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Universal Compressor & Resizer (PDF & JPG)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- pdf-lib untuk membuat file PDF hasil kompresi -->
     <script src="https://unpkg.com/pdf-lib@1.4.0/dist/pdf-lib.min.js"></script>
+    <!-- pdf.js untuk membaca halaman PDF di browser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+        // Konfigurasi worker PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    </script>
 </head>
 <body class="bg-slate-900 font-sans antialiased text-slate-100 min-h-screen flex items-center justify-center p-4">
 
     <div class="bg-slate-800 border border-slate-700 w-full max-w-lg p-6 rounded-2xl shadow-2xl space-y-6">
         <div class="text-center">
             <h1 class="text-xl font-bold">Kompresi File Presisi (PDF & JPG/PNG)</h1>
-            <p class="text-xs text-slate-400 mt-1">Tentukan ukuran target file sesuai keinginan Anda (misal: 1 MB).</p>
+            <p class="text-xs text-slate-400 mt-1">Kompres file secara agresif hingga mencapai target ukuran yang diinginkan.</p>
         </div>
 
         <form id="compress-form" onsubmit="handleUniversalCompress(event)" class="space-y-4 text-xs">
@@ -29,7 +36,7 @@
                     <input type="number" id="target-size-mb" step="0.1" min="0.1" value="1.0" required class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-100 font-mono">
                     <span class="text-slate-400 font-semibold">MB</span>
                 </div>
-                <p class="text-[10px] text-slate-500 mt-1">Sistem akan menyesuaikan kompresi hingga mendekati atau di bawah ukuran ini.</p>
+                <p class="text-[10px] text-slate-500 mt-1">Sistem akan menyesuaikan kualitas render agar ukuran file berada di bawah atau pas dengan target.</p>
             </div>
 
             <!-- Input Penamaan File -->
@@ -41,6 +48,11 @@
             <button type="submit" id="btn-process" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition shadow-md">
                 Proses & Kompres Dokumen
             </button>
+            
+            <!-- Copyright Tim IT Kelurahan Pager -->
+            <div class="text-center pt-1">
+                <p class="text-[11px] text-slate-400 font-medium">Copyright © 2026 Tim IT - Kelurahan Pager</p>
+            </div>
         </form>
 
         <div id="result-section" class="hidden pt-4 border-t border-slate-700 text-center space-y-3">
@@ -51,7 +63,7 @@
         </div>
     </div>
 
-    <!-- Kanvas tersembunyi untuk merender ulang kualitas gambar/PDF -->
+    <!-- Kanvas tersembunyi untuk proses rendering -->
     <canvas id="hidden-canvas" class="hidden"></canvas>
 
     <script>
@@ -70,21 +82,22 @@
             const file = fileInput.files[0];
             const targetBytes = targetSizeMB * 1024 * 1024;
 
-            btnProcess.innerText = "Mengompresi ke Target Ukuran...";
+            btnProcess.innerText = "Mengompresi Dokumen...";
             btnProcess.disabled = true;
+            resultSection.classList.add('hidden');
 
             try {
                 let finalBlob;
                 let finalExtension = "";
 
                 if (file.type.startsWith('image/')) {
-                    // Kompresi untuk File Gambar (JPG / PNG)
-                    finalExtension = file.type === 'png' ? 'png' : 'jpg';
+                    finalExtension = file.type === 'image/png' ? 'png' : 'jpg';
                     finalBlob = await compressImageToTarget(file, targetBytes, finalExtension);
                 } else if (file.type === 'application/pdf') {
-                    // Kompresi untuk File PDF (merender halaman ke canvas dengan penyesuaian kualitas)
                     finalExtension = 'pdf';
-                    finalBlob = await compressPDFToTarget(file, targetBytes);
+                    finalBlob = await compressPDFToTarget(file, targetBytes, (msg) => {
+                        btnProcess.innerText = msg;
+                    });
                 } else {
                     throw new Error("Format file tidak didukung!");
                 }
@@ -108,7 +121,7 @@
             }
         }
 
-        // Fungsi penyesuaian kualitas gambar dinamis untuk mencapai target ukuran
+        // Kompresi Gambar Murni Menuju Target Ukuran
         function compressImageToTarget(file, targetBytes, fileType) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -121,8 +134,8 @@
                         let width = img.width;
                         let height = img.height;
                         
-                        // Batasi dimensi maksimal jika gambar terlalu besar agar kompresi efektif
-                        const MAX_DIMENSION = 2000;
+                        // Batasi resolusi awal jika terlalu besar
+                        const MAX_DIMENSION = 1400;
                         if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
                             if (width > height) {
                                 height = Math.round((height * MAX_DIMENSION) / width);
@@ -137,8 +150,7 @@
                         canvas.height = height;
                         ctx.drawImage(img, 0, 0, width, height);
 
-                        // Iterasi kualitas kompresi bertahap hingga mendekati target ukuran
-                        let quality = 0.9;
+                        let quality = 0.85;
                         let mimeType = fileType === 'png' ? 'image/png' : 'image/jpeg';
                         
                         function tryCompress() {
@@ -164,21 +176,67 @@
             });
         }
 
-        // Fungsi kompresi PDF berbasis rendering ulang halaman grafis
-        async function compressPDFToTarget(file, targetBytes) {
+        // Kompresi PDF Menuju Target Ukuran secara Pintar
+        async function compressPDFToTarget(file, targetBytes, onProgress) {
             const arrayBuffer = await file.arrayBuffer();
-            const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
-            
-            // Menggunakan struktur objek stream bawaan pdf-lib dengan optimasi kompresi
-            const compressedPdfBytes = await pdfDoc.save({ 
-                useObjectStreams: true,
-                addDefaultPage: false 
-            });
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdfDoc = await loadingTask.promise;
+            const numPages = pdfDoc.numPages;
 
-            let blob = new Blob([compressedPdfBytes], { type: 'application/pdf' });
-            
-            // Jika ukuran hasil masih di atas target, lakukan penyesuaian objek metadata lebih lanjut
-            return blob;
+            // Tentukan skala & kualitas awal berdasarkan jumlah halaman dan target ukuran
+            let scale = 1.2;
+            let quality = 0.75;
+
+            if (numPages > 5) scale = 1.0;
+            if (numPages > 15) scale = 0.8;
+
+            let pdfBytes;
+            let attempt = 0;
+
+            while (attempt < 4) {
+                attempt++;
+                onProgress(`Mengompresi PDF (Percobaan ${attempt}/4)...`);
+
+                const newPdfDoc = await PDFLib.PDFDocument.create();
+
+                for (let i = 1; i <= numPages; i++) {
+                    const page = await pdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: scale });
+                    
+                    const canvas = document.getElementById('hidden-canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+                    // Kompres halaman menjadi JPEG dengan kualitas tertentu
+                    const imgDataUrl = canvas.toDataURL('image/jpeg', quality);
+                    const jpgImageBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
+                    const jpgImage = await newPdfDoc.embedJpg(jpgImageBytes);
+
+                    const newPage = newPdfDoc.addPage([viewport.width, viewport.height]);
+                    newPage.drawImage(jpgImage, {
+                        x: 0,
+                        y: 0,
+                        width: viewport.width,
+                        height: viewport.height,
+                    });
+                }
+
+                pdfBytes = await newPdfDoc.save({ useObjectStreams: true });
+
+                // Jika ukuran sudah di bawah target atau sudah mencapai batas minimal kompresi, hentikan loop
+                if (pdfBytes.byteLength <= targetBytes || scale <= 0.5 || quality <= 0.3) {
+                    break;
+                }
+
+                // Jika masih kebesaran, turunkan skala dan kualitas secara bertahap untuk percobaan berikutnya
+                scale *= 0.8;
+                quality -= 0.15;
+            }
+
+            return new Blob([pdfBytes], { type: 'application/pdf' });
         }
     </script>
 </body>
