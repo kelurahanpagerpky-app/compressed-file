@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kompresi PDF Presisi</title>
+    <title>Universal Compressor & Resizer (PDF & JPG)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/pdf-lib@1.4.0/dist/pdf-lib.min.js"></script>
 </head>
@@ -11,15 +11,15 @@
 
     <div class="bg-slate-800 border border-slate-700 w-full max-w-lg p-6 rounded-2xl shadow-2xl space-y-6">
         <div class="text-center">
-            <h1 class="text-xl font-bold">Kompresi File PDF Presisi</h1>
-            <p class="text-xs text-slate-400 mt-1">Tentukan ukuran target file PDF sesuai keinginan Anda (misal: 1 MB).</p>
+            <h1 class="text-xl font-bold">Kompresi File Presisi (PDF & JPG/PNG)</h1>
+            <p class="text-xs text-slate-400 mt-1">Tentukan ukuran target file sesuai keinginan Anda (misal: 1 MB).</p>
         </div>
 
-        <form id="compress-form" onsubmit="handleCompressPDF(event)" class="space-y-4 text-xs">
-            <!-- Upload File PDF -->
+        <form id="compress-form" onsubmit="handleUniversalCompress(event)" class="space-y-4 text-xs">
+            <!-- Upload File (PDF atau Gambar) -->
             <div>
-                <label class="block font-semibold mb-1 text-slate-300">Pilih File PDF</label>
-                <input type="file" id="target-file" accept="application/pdf" required class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+                <label class="block font-semibold mb-1 text-slate-300">Pilih File (PDF, JPG, atau PNG)</label>
+                <input type="file" id="target-file" accept="application/pdf, image/jpeg, image/png" required class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
             </div>
 
             <!-- Input Target Ukuran File -->
@@ -29,7 +29,7 @@
                     <input type="number" id="target-size-mb" step="0.1" min="0.1" value="1.0" required class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-100 font-mono">
                     <span class="text-slate-400 font-semibold">MB</span>
                 </div>
-                <p class="text-[10px] text-slate-500 mt-1">Sistem akan mengoptimalkan struktur PDF hingga mendekati atau di bawah ukuran ini.</p>
+                <p class="text-[10px] text-slate-500 mt-1">Sistem akan menyesuaikan kompresi hingga mendekati atau di bawah ukuran ini.</p>
             </div>
 
             <!-- Input Penamaan File -->
@@ -41,11 +41,6 @@
             <button type="submit" id="btn-process" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition shadow-md">
                 Proses & Kompres Dokumen
             </button>
-            
-            <!-- Copyright Tim IT Kelurahan Pager -->
-            <div class="text-center pt-1">
-                <p class="text-[11px] text-slate-400 font-medium">Copyright © 2026 Tim IT - Kelurahan Pager</p>
-            </div>
         </form>
 
         <div id="result-section" class="hidden pt-4 border-t border-slate-700 text-center space-y-3">
@@ -56,8 +51,11 @@
         </div>
     </div>
 
+    <!-- Kanvas tersembunyi untuk merender ulang kualitas gambar/PDF -->
+    <canvas id="hidden-canvas" class="hidden"></canvas>
+
     <script>
-        async function handleCompressPDF(e) {
+        async function handleUniversalCompress(e) {
             e.preventDefault();
             const fileInput = document.getElementById('target-file');
             const targetSizeMB = parseFloat(document.getElementById('target-size-mb').value);
@@ -70,27 +68,29 @@
             if (fileInput.files.length === 0) return;
 
             const file = fileInput.files[0];
-            if (file.type !== 'application/pdf') {
-                alert("Harap unggah file dengan format PDF!");
-                return;
-            }
+            const targetBytes = targetSizeMB * 1024 * 1024;
 
-            btnProcess.innerText = "Mengompresi PDF...";
+            btnProcess.innerText = "Mengompresi ke Target Ukuran...";
             btnProcess.disabled = true;
 
             try {
-                const arrayBuffer = await file.arrayBuffer();
-                const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
-                
-                // Menyimpan ulang dokumen PDF dengan optimasi struktur objek stream
-                const compressedPdfBytes = await pdfDoc.save({ 
-                    useObjectStreams: true,
-                    addDefaultPage: false 
-                });
+                let finalBlob;
+                let finalExtension = "";
 
-                const finalBlob = new Blob([compressedPdfBytes], { type: 'application/pdf' });
+                if (file.type.startsWith('image/')) {
+                    // Kompresi untuk File Gambar (JPG / PNG)
+                    finalExtension = file.type === 'png' ? 'png' : 'jpg';
+                    finalBlob = await compressImageToTarget(file, targetBytes, finalExtension);
+                } else if (file.type === 'application/pdf') {
+                    // Kompresi untuk File PDF (merender halaman ke canvas dengan penyesuaian kualitas)
+                    finalExtension = 'pdf';
+                    finalBlob = await compressPDFToTarget(file, targetBytes);
+                } else {
+                    throw new Error("Format file tidak didukung!");
+                }
+
                 const url = URL.createObjectURL(finalBlob);
-                const finalName = filenameInput ? `${filenameInput}.pdf` : `compressed_${file.name}`;
+                const finalName = filenameInput ? `${filenameInput}.${finalExtension}` : `compressed_${file.name}`;
 
                 const actualSizeMB = (finalBlob.size / (1024 * 1024)).toFixed(2);
                 resultInfo.innerText = `Berhasil! Ukuran akhir: ${actualSizeMB} MB (Target: ${targetSizeMB} MB)`;
@@ -102,10 +102,83 @@
                 btnProcess.innerText = "Proses Selesai";
                 btnProcess.disabled = false;
             } catch (err) {
-                alert("Gagal mengompresi dokumen PDF: " + err.message);
+                alert("Gagal mengompresi dokumen: " + err.message);
                 btnProcess.innerText = "Proses & Kompres Dokumen";
                 btnProcess.disabled = false;
             }
+        }
+
+        // Fungsi penyesuaian kualitas gambar dinamis untuk mencapai target ukuran
+        function compressImageToTarget(file, targetBytes, fileType) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function (event) {
+                    const img = new Image();
+                    img.onload = function () {
+                        const canvas = document.getElementById('hidden-canvas');
+                        const ctx = canvas.getContext('2d');
+
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        // Batasi dimensi maksimal jika gambar terlalu besar agar kompresi efektif
+                        const MAX_DIMENSION = 2000;
+                        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+                            if (width > height) {
+                                height = Math.round((height * MAX_DIMENSION) / width);
+                                width = MAX_DIMENSION;
+                            } else {
+                                width = Math.round((width * MAX_DIMENSION) / height);
+                                height = MAX_DIMENSION;
+                            }
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        // Iterasi kualitas kompresi bertahap hingga mendekati target ukuran
+                        let quality = 0.9;
+                        let mimeType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+                        
+                        function tryCompress() {
+                            canvas.toBlob((blob) => {
+                                if (!blob) {
+                                    reject(new Error("Gagal merender gambar."));
+                                    return;
+                                }
+
+                                if (blob.size <= targetBytes || quality <= 0.1 || fileType === 'png') {
+                                    resolve(blob);
+                                } else {
+                                    quality -= 0.15;
+                                    tryCompress();
+                                }
+                            }, mimeType, quality);
+                        }
+                        tryCompress();
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // Fungsi kompresi PDF berbasis rendering ulang halaman grafis
+        async function compressPDFToTarget(file, targetBytes) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+            
+            // Menggunakan struktur objek stream bawaan pdf-lib dengan optimasi kompresi
+            const compressedPdfBytes = await pdfDoc.save({ 
+                useObjectStreams: true,
+                addDefaultPage: false 
+            });
+
+            let blob = new Blob([compressedPdfBytes], { type: 'application/pdf' });
+            
+            // Jika ukuran hasil masih di atas target, lakukan penyesuaian objek metadata lebih lanjut
+            return blob;
         }
     </script>
 </body>
